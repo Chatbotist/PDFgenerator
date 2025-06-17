@@ -4,7 +4,6 @@ import { v4 as uuidv4 } from 'uuid'
 import { PDFDocument, rgb } from 'pdf-lib'
 import fontkit from '@pdf-lib/fontkit'
 
-// Виртуальное хранилище файлов
 const fileStorage = new Map()
 
 // Загрузка шрифта (NotoSans-Regular.ttf должен быть в public/fonts/)
