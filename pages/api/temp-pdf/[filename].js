@@ -1,7 +1,6 @@
 import { readFileSync, existsSync } from 'fs'
 import { join } from 'path'
 
-// Импортируем из generate-pdf.js
 import { fileStorage, cleanupFiles } from '../generate-pdf'
 
 export default function handler(req, res) {
