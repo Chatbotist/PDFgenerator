@@ -1,10 +1,14 @@
 import { writeFileSync } from 'fs'
 import { join } from 'path'
 import { v4 as uuidv4 } from 'uuid'
-import { PDFDocument, StandardFonts, rgb } from 'pdf-lib'
+import { PDFDocument, rgb } from 'pdf-lib'
+import fontkit from '@pdf-lib/fontkit'
+
+// Хранилище для отслеживания файлов
+const fileStorage = new Map()
 
 export default async function handler(req, res) {
-  // Настройка CORS
+  // CORS headers
   res.setHeader('Access-Control-Allow-Origin', '*')
   res.setHeader('Access-Control-Allow-Methods', 'POST')
 
@@ -21,9 +25,20 @@ export default async function handler(req, res) {
 
     // Создаем PDF
     const pdfDoc = await PDFDocument.create()
-    const page = pdfDoc.addPage([600, 400])
-    const font = await pdfDoc.embedFont(StandardFonts.Helvetica)
     
+    // Регистрируем fontkit для поддержки Unicode
+    pdfDoc.registerFontkit(fontkit)
+    
+    // Загружаем шрифт с поддержкой Unicode
+    const fontBytes = await fetch(
+      'https://github.com/googlefonts/noto-cjk/raw/main/Sans/OTF/Japanese/NotoSansCJKjp-Regular.otf'
+    ).then(res => res.arrayBuffer())
+    
+    const font = await pdfDoc.embedFont(fontBytes)
+
+    const page = pdfDoc.addPage([600, 400])
+    
+    // Рисуем текст с поддержкой Unicode
     page.drawText(text, {
       x: 50,
       y: 350,
@@ -34,17 +49,25 @@ export default async function handler(req, res) {
 
     const pdfBytes = await pdfDoc.save()
 
-    // Сохраняем временный файл
+    // Генерируем имя файла
     const fileName = `${uuidv4()}.pdf`
     const filePath = join('/tmp', fileName)
+    
+    // Сохраняем файл
     writeFileSync(filePath, pdfBytes)
 
-    // Ссылка будет действительна 5 минут
-    const pdfUrl = `${process.env.VERCEL_URL}/api/temp-pdf/${fileName}`
+    // Запоминаем файл в хранилище
+    const expiresAt = Date.now() + 5 * 60 * 1000 // 5 минут
+    fileStorage.set(fileName, { path: filePath, expiresAt })
+
+    // Очистка старых файлов
+    cleanupFiles()
+
+    const pdfUrl = `${process.env.VERCEL_URL || 'http://localhost:3000'}/api/temp-pdf/${fileName}`
     
     return res.status(200).json({ 
       pdfUrl,
-      expiresAt: new Date(Date.now() + 5 * 60 * 1000).toISOString()
+      expiresAt: new Date(expiresAt).toISOString()
     })
 
   } catch (error) {
@@ -53,5 +76,18 @@ export default async function handler(req, res) {
       error: 'PDF generation failed',
       details: error.message 
     })
+  }
+}
+
+// Функция очистки
+function cleanupFiles() {
+  const now = Date.now()
+  for (const [name, { expiresAt, path }] of fileStorage) {
+    if (expiresAt < now) {
+      try {
+        require('fs').unlinkSync(path)
+      } catch (e) {}
+      fileStorage.delete(name)
+    }
   }
 }
