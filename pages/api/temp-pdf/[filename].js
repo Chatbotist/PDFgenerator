@@ -1,31 +1,38 @@
-import { readFileSync } from 'fs'
+import { readFileSync, existsSync } from 'fs'
 import { join } from 'path'
 
-const { fileStorage } = require('../generate-pdf')
+// Импортируем из generate-pdf.js
+import { fileStorage, cleanupFiles } from '../generate-pdf'
 
 export default function handler(req, res) {
+  // Очищаем старые файлы перед каждым запросом
+  cleanupFiles()
+
   const { filename } = req.query
   
-  // Проверяем наличие файла в хранилище
-  const fileData = fileStorage.get(filename)
+  // Проверяем наличие в хранилище
+  const fileData = fileStorage[filename]
   
   if (!fileData) {
     return res.status(404).json({ error: 'File not found or expired' })
   }
 
   try {
-    // Проверяем существование файла на диске
+    // Двойная проверка существования файла
+    if (!existsSync(fileData.path)) {
+      delete fileStorage[filename]
+      return res.status(404).json({ error: 'File was deleted' })
+    }
+
     const file = readFileSync(fileData.path)
     
-    // Устанавливаем заголовки
     res.setHeader('Content-Type', 'application/pdf')
     res.setHeader('Content-Disposition', `inline; filename="${filename}"`)
-    
     return res.send(file)
 
   } catch (e) {
-    // Удаляем файл из хранилища при ошибке
-    fileStorage.delete(filename)
-    return res.status(410).json({ error: 'File access error' })
+    console.error('File serving error:', e)
+    delete fileStorage[filename]
+    return res.status(500).json({ error: 'Failed to serve file' })
   }
 }
