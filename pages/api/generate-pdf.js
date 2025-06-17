@@ -1,32 +1,26 @@
-import { writeFileSync, readFileSync, unlinkSync } from 'fs'
+import { writeFileSync, readFileSync, existsSync, unlinkSync } from 'fs'
 import { join } from 'path'
 import { v4 as uuidv4 } from 'uuid'
 import { PDFDocument, rgb } from 'pdf-lib'
 import fontkit from '@pdf-lib/fontkit'
 
-const fileStorage = new Map()
+// Шрифт должен быть в public/fonts/NotoSans-Regular.ttf
+const FONT_PATH = join(process.cwd(), 'public', 'fonts', 'NotoSans-Regular.ttf')
 
-// Загрузка шрифта (NotoSans-Regular.ttf должен быть в public/fonts/)
-const fontPath = join(process.cwd(), 'public', 'fonts', 'NotoSans-Regular.ttf')
-const fontBytes = readFileSync(fontPath)
+// Глобальное хранилище (вместо Map для persistence между запросами)
+const fileStorage = {}
 
-// Функция очистки старых файлов
-function cleanupFiles() {
-  const now = Date.now()
-  for (const [name, { expiresAt, path }] of fileStorage) {
-    if (expiresAt < now) {
-      try {
-        unlinkSync(path)
-      } catch (e) {
-        console.error('Error deleting file:', e)
-      }
-      fileStorage.delete(name)
-    }
-  }
+// Загружаем шрифт один раз при старте
+let fontBytes
+try {
+  fontBytes = readFileSync(FONT_PATH)
+} catch (e) {
+  console.error('Font loading error:', e)
+  throw new Error('Could not load font file')
 }
 
 export default async function handler(req, res) {
-  // Настройка CORS
+  // CORS
   res.setHeader('Access-Control-Allow-Origin', '*')
   res.setHeader('Access-Control-Allow-Methods', 'POST')
 
@@ -41,53 +35,38 @@ export default async function handler(req, res) {
       return res.status(400).json({ error: 'Valid text is required' })
     }
 
-    // Создаем PDF документ
+    // Создаем PDF
     const pdfDoc = await PDFDocument.create()
     pdfDoc.registerFontkit(fontkit)
-    
-    // Встраиваем шрифт с поддержкой Unicode
     const font = await pdfDoc.embedFont(fontBytes)
     
-    // Добавляем страницу
     const page = pdfDoc.addPage([600, 400])
-    
-    // Добавляем текст
     page.drawText(text, {
       x: 50,
       y: 350,
       size: 15,
       font,
       color: rgb(0, 0, 0),
-      lineHeight: 20,
-      maxWidth: 500,
     })
 
-    // Сохраняем PDF
     const pdfBytes = await pdfDoc.save()
-
-    // Генерируем уникальное имя файла
     const fileName = `${uuidv4()}.pdf`
     const filePath = join('/tmp', fileName)
-    
-    // Сохраняем файл на диск
+
+    // Сохраняем файл
     writeFileSync(filePath, pdfBytes)
 
-    // Запоминаем файл в хранилище
+    // Сохраняем в хранилище (с expiresAt timestamp)
     const expiresAt = Date.now() + 5 * 60 * 1000 // 5 минут
-    fileStorage.set(fileName, { path: filePath, expiresAt })
+    fileStorage[fileName] = { path: filePath, expiresAt }
 
-    // Очищаем старые файлы
-    cleanupFiles()
-
-    // Формируем URL для доступа
+    // Формируем URL
     const baseUrl = process.env.VERCEL_URL 
       ? `https://${process.env.VERCEL_URL}`
       : 'http://localhost:3000'
     
-    const pdfUrl = `${baseUrl}/api/temp-pdf/${fileName}`
-    
     return res.status(200).json({ 
-      pdfUrl,
+      pdfUrl: `${baseUrl}/api/temp-pdf/${fileName}`,
       expiresAt: new Date(expiresAt).toISOString()
     })
 
@@ -100,5 +79,15 @@ export default async function handler(req, res) {
   }
 }
 
-// Регулярная очистка каждую минуту
-setInterval(cleanupFiles, 60 * 1000)
+// Функция очистки (вызывается вручную)
+export function cleanupFiles() {
+  const now = Date.now()
+  Object.keys(fileStorage).forEach(fileName => {
+    if (fileStorage[fileName].expiresAt < now) {
+      try {
+        unlinkSync(fileStorage[fileName].path)
+      } catch (e) {}
+      delete fileStorage[fileName]
+    }
+  })
+}
