@@ -1,7 +1,6 @@
 import { readFileSync } from 'fs'
 import { join } from 'path'
 
-// Импортируем хранилище из generate-pdf
 const { fileStorage } = require('../generate-pdf')
 
 export default function handler(req, res) {
